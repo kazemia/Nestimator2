@@ -8,49 +8,28 @@ library(lpSolve)
 library(doParallel)
 library(dplyr)
 
-MakeP_Z <- function(data, Z_column, T_column, C_columns = NULL, 
-                    parametric = FALSE){
+MakeP_Z <- function(data, Z_column, T_column){
   #Function: MakeP_Z
   #Purpose: Calculate P(Treatment|Instrument)
   #Input:
   #       data: is the original data set as data frame
   #       Z_column: is the name of the column in data for the instrument
   #       T_column: is the name of the column in data for the treatment
-  #       C_columns: is a vector of the names of the columns in the data to 
-  #                  adjust for
-  #       parametric: is an indicator saying whether or not the estimation 
-  #                   should be done parametrically with multinomial regression
   #Returns: A data frame of probabilities with a column for every value of the
   #         treatment and a row for every value of the instrument.
-  #Note: Adjustment for C_columns is only available with parametric modelling
-  if(parametric){
-    my_formula <- paste(T_column, "~", Z_column)
-    if(!is.null(C_columns)){
-      for (c in C_columns) {
-        my_formula <- paste(my_formula, "+", c)
-      }
-    }
-    my_formula %>% as.formula() %>% nnet::multinom(data = data) %>% 
-      marginaleffects::avg_predictions(variables = Z_column) %>%
-      select(all_of(c("group", "estimate", Z_column))) %>%
-      pivot_wider(names_from = group, values_from = estimate) %>% return()
-    
-  }else{
-    P_Z <- data %>% group_by(eval(parse(text = Z_column)), eval(parse(text = T_column))) %>%
-      summarise(P = n(), .groups = "keep") %>%
-      as.data.frame()
-    colnames(P_Z) <- c(Z_column, T_column, "P")
-    P_Z <- P_Z %>% reshape(direction = "wide", idvar = Z_column, timevar = T_column)
-    P_Z[is.na(P_Z)] <- 0
-    P_Z[,2:ncol(P_Z)] <- P_Z[,2:ncol(P_Z)] %>% apply(1, function(x) x/sum(x)) %>% t()
-    colnames(P_Z)[2:ncol(P_Z)] <- substring(colnames(P_Z)[2:ncol(P_Z)], 3)
-    rownames(P_Z) <- 1:nrow(P_Z)
-    return(P_Z)
-  }
+  P_Z <- data %>% group_by(eval(parse(text = Z_column)), eval(parse(text = T_column))) %>%
+    summarise(P = n(), .groups = "keep") %>%
+    as.data.frame()
+  colnames(P_Z) <- c(Z_column, T_column, "P")
+  P_Z <- P_Z %>% reshape(direction = "wide", idvar = Z_column, timevar = T_column)
+  P_Z[is.na(P_Z)] <- 0
+  P_Z[,2:ncol(P_Z)] <- P_Z[,2:ncol(P_Z)] %>% apply(1, function(x) x/sum(x)) %>% t()
+  colnames(P_Z)[2:ncol(P_Z)] <- substring(colnames(P_Z)[2:ncol(P_Z)], 3)
+  rownames(P_Z) <- 1:nrow(P_Z)
+  return(P_Z)
 }
 
-MakeQ_Z <- function(data, Z_column, T_column, Y_column, C_columns = NULL,
-                    parametric = FALSE, family = NULL, P_Z = NULL){
+MakeQ_Z <- function(data, Z_column, T_column, Y_column){
   #Function: MakeQ_Z
   #Purpose: Calculate E(Response*1[Treatment = t]|Instrument)
   #Input:
@@ -58,51 +37,22 @@ MakeQ_Z <- function(data, Z_column, T_column, Y_column, C_columns = NULL,
   #       Z_column: is the name of the column in data for the instrument
   #       T_column: is the name of the column in data for the treatment
   #       Y_column: is the name of the column in data for the response
-  #       C_columns: is a vector of the names of the columns in the data to 
-  #                  adjust for
-  #       parametric: is an indicator saying whether or not the estimation 
-  #                   should be done parametrically with glm
-  #       family: family input in the glm regression model
-  #       P_Z: The P_Z to be used to multiply with the marginal effects.
-  #            Must be passed for parametric modelling.
   #Returns: A data frame of expectations with a column for every value of the
   #         treatment and a row for every value of the instrument.
-  #Note: Adjustment for C_columns is only available with parametric modelling
-  if(parametric){
-    my_formula <- paste0(Y_column, "~", Z_column, "*",T_column)
-    if(!is.null(C_columns)){
-      for (c in C_columns) {
-        my_formula <- paste(my_formula, "+", c)
-      }
-    }
-    long_effects <- my_formula %>% as.formula() %>% glm(data = data, family = family) %>% 
-      marginaleffects::avg_predictions(variables = c(Z_column, T_column)) %>%
-      select(all_of(c(T_column, "estimate", Z_column)))
-    colnames(long_effects) <- c("group", "estimate", Z_column)
-    wide_effects <- long_effects %>% 
-      pivot_wider(names_from = group, values_from = estimate) %>%
-      select(all_of(colnames(P_Z)))
-    Z_col <- wide_effects[[Z_column]]
-    result <- (wide_effects %>% select(-all_of(Z_column)))*(P_Z %>% select(-all_of(Z_column)))
-    result[[Z_column]] <- Z_col
-    return(result %>% select(all_of(colnames(P_Z))))
-    
-  }else{
-    Q_Z <- data %>% group_by(eval(parse(text = Z_column)), eval(parse(text = T_column))) %>%
-      summarise(Y = mean(eval(parse(text = Y_column))),
-                Weight = n(), .groups = "keep") %>% 
-      as.data.frame()
-    colnames(Q_Z) <- c(Z_column, T_column, "Y", "Weight")
-    Q_Z <- Q_Z %>% group_by(eval(parse(text = Z_column))) %>%
-      mutate(Denominator = sum(Weight)) %>%
-      mutate(Y = Y*Weight/Denominator) %>% as.data.frame()
-    Q_Z <- Q_Z %>% select(all_of(c(Z_column, T_column, "Y")))
-    Q_Z <- Q_Z %>% reshape(direction = "wide", idvar = Z_column, timevar = T_column)
-    colnames(Q_Z)[2:ncol(Q_Z)] <- substring(colnames(Q_Z)[2:ncol(Q_Z)], 3)
-    rownames(Q_Z) <- 1:nrow(Q_Z)
-    Q_Z[is.na(Q_Z)] <- 0
-    return(Q_Z)
-  }
+  Q_Z <- data %>% group_by(eval(parse(text = Z_column)), eval(parse(text = T_column))) %>%
+    summarise(Y = mean(eval(parse(text = Y_column))),
+              Weight = n(), .groups = "keep") %>% 
+    as.data.frame()
+  colnames(Q_Z) <- c(Z_column, T_column, "Y", "Weight")
+  Q_Z <- Q_Z %>% group_by(eval(parse(text = Z_column))) %>%
+    mutate(Denominator = sum(Weight)) %>%
+    mutate(Y = Y*Weight/Denominator) %>% as.data.frame()
+  Q_Z <- Q_Z %>% select(all_of(c(Z_column, T_column, "Y")))
+  Q_Z <- Q_Z %>% reshape(direction = "wide", idvar = Z_column, timevar = T_column)
+  colnames(Q_Z)[2:ncol(Q_Z)] <- substring(colnames(Q_Z)[2:ncol(Q_Z)], 3)
+  rownames(Q_Z) <- 1:nrow(Q_Z)
+  Q_Z[is.na(Q_Z)] <- 0
+  return(Q_Z)
 }
 
 GenerateA <- function(TLevels){
@@ -143,7 +93,7 @@ MakeR <- function(A, Z, T_decider = T_decider){
   outer(Z,A, Vectorize(T_decider)) %>% as.data.frame() %>% return()
 }
 
-MakeKB <- function(R, TLevels, tolerance){
+MakeKB <- function(R, TLevels, tolerance, balanced = FALSE, weights = NULL){
   #Function: MakeKB
   #Purpose: Making binary indicator matrices and K
   #Input:
@@ -152,8 +102,13 @@ MakeKB <- function(R, TLevels, tolerance){
   #       tolerance: The number of decimals of accuracy.
   #Returns: A list of lists of matrices. For every treatment, it calculates the 
   #         indicator matrix B_t, its psudo-inverse B_t^+ and K_t = I - B_tB_t^+
-  KB_t <- function(t, R, tolerance){
+  KB_t <- function(t, R, tolerance, balanced, weights){
     B_t <- 1*(R==t)
+    if(balanced){
+      for(c in colnames(B_t)){
+        B_t[,c] <- B_t[,c] * weights
+      }
+    }
     B_t_i <- MASS::ginv(B_t)
     temp <- B_t_i %*% B_t
     K = round(diag(ncol(R)) - temp, tolerance)
@@ -161,7 +116,7 @@ MakeKB <- function(R, TLevels, tolerance){
          B_t = B_t,
          B_t_i = B_t_i)
   }
-  KB <- lapply(TLevels, KB_t, R, tolerance)
+  KB <- lapply(TLevels, KB_t, R, tolerance, balanced, weights)
   names(KB) <- TLevels
   return(KB)
 }
@@ -329,27 +284,41 @@ LATEIdentifier <- function(Q_Z, KB, b, P_Sigma, RR = FALSE, AverageProb = FALSE)
   return(Q_Sigma)
 }
 
-CatSimulator <- function(n, Z, TLevels, VT, VP, VY, TY, VReturn, ZT = "exp"){
+CatSimulator <- function(n, Z, A, TLevels, VLevels, VP, VA, VY, TY, T_decider){
   #Function: CatSimulator
-  #Purpose: Simulating data with >2 treatments
+  #Purpose: Simulating data with more than 2 treatments
   #Input:
   #       n: is the total number of patients
-  #       Z: A list of all available value of the instrument
-  #       TLevels: A vector of possible values for the treatment
-  #       VT: is the effect of the confounders on the treatments.
-  #           This is a matrix, where the value in row i and column j is the
-  #           effect of the j-th confounder on the i-th treatment
-  #       VP: is the incidence rates of the confounders. This is a vector
-  #           of the length the number of confounders where the value are
-  #           between 0 and 1.
-  #       VY: is the effect of the confounder on the response
-  #       TY: is the treatment effect on the response
-  #       VReturn: Is an indicator vector for wheter or not the confounders
-  #                are observed.
-  #       ZT: is the shape of the effect of Z on T
+  #       Z: is a list of ordered vectors of treatments
+  #       A: a list of adherence sets
+  #       TLevels: a vector of all possible treatments
+  #       VLevels: a vector of levels of confounders
+  #       VP: a vector of probability of being in each confounder level 
+  #           (sums to 1)
+  #       VA: a list of vecotr of probability of A for each level of V 
+  #           (each element sums to 1)
+  #       VY: a vector of effect of each level of V on Y
+  #       TY: a vector of effects of T on Y
+  #       T_decider: the choice function
+  #OPS: max(VY) + max(TY) <= 1
   #Returns: A simulated data set in data frame format with columns
-  #         Z for the instrument, T for the treatment, Y for the response and
-  #         Vs for the observed confounders.
+  #         Z for the instrument, T for the treatment and Y for the response.
+  V_obs <- sample(VLevels, n, replace = TRUE, prob = VP)
+  A_obs <- A[unlist(lapply(VA[as.character(V_obs)],
+                           function(x) 
+                             sample.int(length(A), size = 1, prob = x)))]
+  
+  names(A_obs) <- 1:n
+  Z_obs_ind <- sample.int(length(Z), size = n, replace = TRUE)
+  Z_obs <- Z[Z_obs_ind]
+  names(Z_obs) <- 1:n
+  T_obs <- sapply(1:n, function(x) T_decider(Z_obs[[x]], A_obs[[x]]))
+  YP <- TY[match(T_obs, TLevels)] + VY[match(V_obs,VLevels)]
+  Y_obs <- rbinom(rep(n,n),1,YP)
+  return(data.frame(Z = Z_obs_ind, T = T_obs, Y = Y_obs))
+}
+
+CatSimulator2 <- function(n, Z, TLevels, VT, VP, VY, TY, YPintercept, VReturn, ZT = "exp"){
   Z_obs_ind <- sample.int(length(Z), size = n, replace = TRUE)
   Z_obs <- Z[Z_obs_ind]
   names(Z_obs) <- 1:n
@@ -368,7 +337,7 @@ CatSimulator <- function(n, Z, TLevels, VT, VP, VY, TY, VReturn, ZT = "exp"){
   T_probs <- t(apply(T_probs, 1, function(r) r/sum(r)))
   T_obs <- apply(T_probs, 1, function(x) sample(TLevels, size = 1, prob = x))
   YP <- V_obs %*% VY
-  YP <- TY[match(T_obs, TLevels)] + (V_obs %*% VY)
+  YP <- TY[match(T_obs, TLevels)] + (V_obs %*% VY) + YPintercept
   YP[YP < 0] = 0
   YP[YP > 1] = 1
   Y_obs <- rbinom(rep(n,n),1,YP)
@@ -405,7 +374,7 @@ BinarySimulator <- function(ZT, VT, VY, TY, n, OR = FALSE){
 }
 
 BSCICalculator <- function(n, data, Z_column, T_column, Y_column, TLevels, Z,
-                           alpha = 0.05, n_cores = 14, Cap = FALSE,
+                           alpha = 0.05, n_cores = 14, Cap = FALSE, balanced = FALSE,
                            MakeP_Z. = MakeP_Z, MakeQ_Z. = MakeQ_Z,
                            GenerateA. = GenerateA, T_decider. = T_decider, 
                            MakeR. = MakeR, MakeKB. = MakeKB,
@@ -429,7 +398,7 @@ BSCICalculator <- function(n, data, Z_column, T_column, Y_column, TLevels, Z,
   #         BSData: The result of bootstrapping
   #         CIs: data frame of confidence intervals
   StatisticCalculator <- function(counter, data, Z_column, T_column, Y_column, 
-                                  TLevels, Z, MakeP_Z.. = MakeP_Z.,
+                                  TLevels, Z, balanced, MakeP_Z.. = MakeP_Z.,
                                   MakeQ_Z.. = MakeQ_Z.,
                                   GenerateA.. = GenerateA.,
                                   T_decider.. = T_decider., 
@@ -438,11 +407,19 @@ BSCICalculator <- function(n, data, Z_column, T_column, Y_column, TLevels, Z,
                                   P_SigmaIdentifier.. = P_SigmaIdentifier.,
                                   LATEIdentifier.. = LATEIdentifier.){
     data <- data[sample(nrow(data), nrow(data), replace=T),]
+    Z_weights <- data %>% group_by(Z_value) %>% summarise(N = n())
+    Z_weights$Prob <- Z_weights$N/sum(Z_weights$N)
     P_Z <- MakeP_Z..(data, Z_column, T_column)
     Q_Z <- MakeQ_Z..(data, Z_column, T_column, Y_column)
+    if(balanced){
+      for(t in TLevels){
+        P_Z[[t]] <- P_Z[[t]] * Z_weights$Prob
+        Q_Z[[t]] <- Q_Z[[t]] * Z_weights$Prob
+      }
+    }
     A <- GenerateA..(TLevels)
     R <- MakeR..(A, Z, T_decider..)
-    KB <- MakeKB..(R, TLevels, 5)
+    KB <- MakeKB..(R, TLevels, 5, balanced, Z_weights$Prob)
     b <- KbSolver..(KB,4)
     P_Sigma <- P_SigmaIdentifier..(P_Z, KB, b)
     Contrasts <- LATEIdentifier..(Q_Z, KB, b, P_Sigma)
@@ -456,7 +433,7 @@ BSCICalculator <- function(n, data, Z_column, T_column, Y_column, TLevels, Z,
                                   "lpSolve")) %dopar% {
                                     sapply(1:b, StatisticCalculator, data,
                                            Z_column, T_column,Y_column,
-                                           TLevels, Z)
+                                           TLevels, Z, balanced)
                                   }
   stopCluster(myCluster)
   bootstrap_data <- t(boot_b)
