@@ -17,7 +17,7 @@ for(m in myMeds){
   tdds$trtgrp[grepl(m, tdds$trtgrp)] <- m
 }
 #Filter out treatment courses not in my meds
-tdds <- tdds %>% filter((trtgrp %in% myMeds) & (bldt >= as.Date("01012010", "%d%m%Y")) & (bldt < as.Date("01022024", "%d%m%Y")))
+tdds <- tdds %>% filter((trtgrp %in% myMeds) & (bldt > as.Date("31012010", "%d%m%Y")) & (bldt < as.Date("01022024", "%d%m%Y")))
 #Note: Missing trtgrps would disappear once we filter on RA later.
 #Note: Missing bldts have no following visit.
 
@@ -127,11 +127,26 @@ tdsv <- tdsv %>% mutate(visit_id = paste(tcid, visit_no))
 my_visits <- unique(tdsv$visit_id)
 
 #Read more data
-tddisact <- pdir %>% paste0("tddisact.dta") %>% read_dta() %>% mutate(visit_id = paste(tcid, visit_no)) %>% filter(visit_id %in% my_visits)
-tdeq5d <- pdir %>% paste0("tdeq5d.dta") %>% read_dta() %>% mutate(visit_id = paste(tcid, visit_no)) %>% filter(visit_id %in% my_visits)
-tdmhaq <- pdir %>% paste0("tdmhaq.dta") %>% read_dta() %>% mutate(visit_id = paste(tcid, visit_no)) %>% filter(visit_id %in% my_visits)
-tdraid <- pdir %>% paste0("tdraid.dta") %>% read_dta() %>% mutate(visit_id = paste(tcid, visit_no)) %>% filter(visit_id %in% my_visits)
-tdwpai <- pdir %>% paste0("tdwpai.dta") %>% read_dta() %>% mutate(visit_id = paste(tcid, visit_no)) %>% filter(visit_id %in% my_visits)
+tddisact <- pdir %>% paste0("tddisact.dta") %>% read_dta() %>% 
+  mutate(visit_id = paste(tcid, visit_no)) %>% filter(visit_id %in% my_visits) %>% 
+  select(-das28, -das28cat, -das28crp, -das28crpcat, -cdai, -cdaicat, -sdai,
+         -sdaicat, -sdairem, -asdascat, -asdasrem) %>% 
+  select(-all_of(paste0("basdai", 1:6)))
+
+tdeq5d <- pdir %>% paste0("tdeq5d.dta") %>% read_dta() %>% 
+  mutate(visit_id = paste(tcid, visit_no)) %>% 
+  filter(visit_id %in% my_visits) %>% select(visit_id, EQ_index)
+
+tdmhaq <- pdir %>% paste0("tdmhaq.dta") %>% read_dta() %>% 
+  mutate(visit_id = paste(tcid, visit_no)) %>% 
+  filter(visit_id %in% my_visits) %>% select(-all_of(paste0("mhaq", 1:8)))
+
+tdraid <- pdir %>% paste0("tdraid.dta") %>% read_dta() %>% 
+  mutate(visit_id = paste(tcid, visit_no)) %>% 
+  filter(visit_id %in% my_visits) %>% select(visit_id, raid_score)
+tdwpai <- pdir %>% paste0("tdwpai.dta") %>% read_dta() %>% 
+  mutate(visit_id = paste(tcid, visit_no)) %>% filter(visit_id %in% my_visits) %>% 
+  select(-wpai_2, -wpai_3, -wpai_4, -impairment, -absenteeism, -presenteeism)
 
 my_joiner <- function(x, y, by = "visit_id"){
   commonCols <- colnames(y)[colnames(y) %in% colnames(x)]
@@ -150,8 +165,12 @@ MyVisitData <- tdsv %>% my_joiner(tddisact) %>% my_joiner(tdeq5d) %>%
 remove(tddisact, tdeq5d, tdmhaq, tdraid, tdwpai, tdsv)
 
 #Make BL Data
-MyBLData <- MyVisitData %>% filter(visit_no == 1)
-MyVisitData <- MyVisitData %>% filter(visit_no != 1)
+MyVisitData <- MyVisitData %>% 
+  select(-tcidn, -tcido, -timepoint, -visit_id, -bldt, -visit, -center, -vsource)
+MyBLData <- MyVisitData %>% filter(visit_no == 1) %>% 
+  select(-visit_no, -visit_dt, -studyday)
+MyVisitData <- MyVisitData %>% filter(visit_no != 1) %>% 
+  select(-visit_dt)
 
 #Make target visit data
 MyVisitData <- MyVisitData %>% filter(visit_no != 100)
@@ -178,8 +197,168 @@ MyVisitData <- MyVisitData %>%
   filter(visit_no == visit_target) %>%
   select(-visit_target)
 
+#Read more data
+comorbidity <- pdir %>% paste0("Comorbidity.dta") %>% read_dta() %>% 
+  mutate(visit_id = paste0(2, pid, " ", visit_no)) %>% 
+  filter(visit_id %in% my_visits)
+my_comorbidities <- sapply(1:21, function(x) attributes(comorbidity[[paste0("comorb", x)]])$label)
+comorbidity <- comorbidity %>% group_by(pid) %>% 
+  summarise_if(is.numeric, sum, na.rm = TRUE) %>% select(-visit_no)
+comorbidity[,2:22] <- (comorbidity[,2:22] > 0)
+comorbidity <- comorbidity %>% mutate(tcid = paste0(2, pid)) %>% select(-pid)
 
-temp <- colSums(is.na(MyTCData)) %>% as.data.frame()
-temp2 <- MyTCData %>% filter(is.na(wdrdt) & (lvdt-bldt < 180) & (!(tcid %in% MyVisitData$tcid)))
+MyTCData <- left_join(MyTCData, comorbidity, by = "tcid")
+remove(comorbidity)
+
+#Join all data
+colnames(MyBLData)[2:ncol(MyBLData)] <- 
+  paste("BL", colnames(MyBLData)[2:ncol(MyBLData)], sep = "_")
+
+MyVisitData <- MyVisitData %>% select(-visit_no)
+colnames(MyVisitData)[2:ncol(MyVisitData)] <- 
+  paste("T", colnames(MyVisitData)[2:ncol(MyVisitData)], sep = "_")
+
+MyData <- MyTCData %>% left_join(MyBLData, by = "tcid") %>% 
+  left_join(MyVisitData, by = "tcid")
+
+#Clean up
+remove(MyBLData, MyTCData, MyVisitData)
+
+#Fix missing target
+MyData$Rem <- (MyData$T_das28crprem == 1)
+MyData <- MyData %>% mutate(Rem = ifelse(!is.na(Rem), Rem, 
+                                         T_das28rem == 1))
+MyData <- MyData %>% mutate(Rem = ifelse(!is.na(Rem), Rem, 
+                                         T_cdairem == 1))
+MyData <- MyData %>% 
+  mutate(Rem = ifelse(!is.na(Rem), Rem, 
+                      ifelse((MyData$wdrreas %in% 
+                               c("Adverse events", 
+                                 "Lack of efficacy", 
+                                 "Lack of efficacy and adverse events")) & 
+                               ((lvdt - bldt)<365),
+                             FALSE, NA)))
+
+#Fix missing RF factor and antiCCP
+library(readxl)
+MyLabData <- read_excel("Data/tdToTSD/td/ExtendedDataExtraction_2024-8-29.xlsx", 
+                        sheet = "DiagnosticTestsLabData") %>% 
+  filter(DiagnosticTestLab %in% c("RF IgM", "CCP")) %>% 
+  select(PatientID, DiagnosticTestLab, Pos_Neg_Inconclusive, 
+         DiagnosticTestLabDate) %>%
+  filter(!is.na(Pos_Neg_Inconclusive)) %>%
+  group_by(PatientID, DiagnosticTestLab) %>% arrange(DiagnosticTestLabDate) %>%
+  filter(row_number()==n()) %>% as.data.frame() %>% select(-DiagnosticTestLabDate) %>%
+  tidyr::pivot_wider(id_cols = PatientID, names_from = DiagnosticTestLab, 
+                     values_from = Pos_Neg_Inconclusive)
+colnames(MyLabData) <- c("PatientID", "RF", "CCP")
+MyData$PatientID <- sapply(strsplit(MyData$patid, "-"), function(x) as.numeric(x[2]))
+MyData <- left_join(MyData, MyLabData, by = "PatientID")
+MyData$rhmfact[is.na(MyData$rhmfact)] <- MyData$RF[is.na(MyData$rhmfact)]
+MyData$anticcp[is.na(MyData$anticcp)] <- MyData$CCP[is.na(MyData$anticcp)]
+MyData <- MyData %>% select(-PatientID, -RF, -CCP)
+remove(MyLabData)
 
 
+#Setting Z values
+TLevels <- c("Inf", "Ada", "Cer", "Eta", "Gol")
+Z <- list("2010" = c("Inf", "Gol", "Cer", "Eta", "Ada"),
+          "2011" = c("Eta", "Inf", "Cer", "Gol", "Ada"),
+          "2012" = c("Inf", "Eta", "Cer", "Gol", "Ada"),
+          "2013" = c("Cer", "Inf", "Gol", "Eta", "Ada"),
+          "2014" = c("Inf", "Cer", "Gol", "Ada", "Eta"),
+          "2015" = c("Inf", "Cer", "Gol", "Eta", "Ada"),
+          "2016" = c("Inf", "Cer", "Eta", "Gol", "Ada"),
+          "2017" = c("Inf", "Eta", "Gol", "Cer", "Ada"),
+          "2018" = c("Inf", "Eta", "Cer", "Ada", "Gol"),
+          "2019" = c("Ada", "Inf", "Eta", "Cer", "Gol"),
+          "2020" = c("Ada", "Inf", "Eta", "Cer", "Gol"),
+          "2021" = c("Ada", "Inf", "Eta", "Cer", "Gol"),
+          "2022" = c("Ada", "Inf", "Eta", "Cer", "Gol"),
+          "2023" = c("Ada", "Inf", "Eta", "Cer", "Gol")
+)
+data <- MyData
+remove(MyData)
+data$Z_value <- NA
+for(y in 2010:2013){
+  StartDate <- as.Date(paste0(y, "-01-31"), "%Y-%m-%d")
+  EndDate <- as.Date(paste0(y+1, "-02-01"), "%Y-%m-%d")
+  data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+}
+y <- 2014
+StartDate <- as.Date(paste0(y, "-01-31"), "%Y-%m-%d")
+EndDate <- as.Date(paste0(y+1, "-03-01"), "%Y-%m-%d")
+data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+y <- 2015
+StartDate <- as.Date(paste0(y, "-02-28"), "%Y-%m-%d")
+EndDate <- as.Date(paste0(y+1, "-03-01"), "%Y-%m-%d")
+data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+y <- 2016
+StartDate <- as.Date(paste0(y, "-02-29"), "%Y-%m-%d")
+EndDate <- as.Date(paste0(y+1, "-03-01"), "%Y-%m-%d")
+data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+y <- 2017
+StartDate <- as.Date(paste0(y, "-02-28"), "%Y-%m-%d")
+EndDate <- as.Date(paste0(y+1, "-02-01"), "%Y-%m-%d")
+data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+for(y in 2018:2023){
+  StartDate <- as.Date(paste0(y, "-01-31"), "%Y-%m-%d")
+  EndDate <- as.Date(paste0(y+1, "-02-01"), "%Y-%m-%d")
+  data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+}
+
+
+#Handle the rest of the missingness
+data <- data %>% select(-tcid, -patid, -trtfull, -wdrreasc, -lvno, -lvdt,
+                            -wdrdt, -diaggrp, -inv, -nurse, -prevbiol,
+                            -BL_das28rem, -BL_das28crprem, -BL_cdairem, -BL_mcii,
+                            -T_das28rem, -T_das28crprem, -T_cdairem, -T_mcii) %>% 
+  mutate(center = as.factor(center),
+         trtgrp = as.factor(trtgrp),
+         wdrreas = as.factor(wdrreas),
+         age = ifelse(!is.na(age), age, (bldt - dob)/365),
+         treatmentdur = as.numeric(trtdiscdt-bldt),
+         diagdur = as.numeric(diagdt-bldt),
+         sympdur = as.numeric(sympdebdt-bldt),
+         sex = as.factor(ifelse(sex %in% c("Male", "Female"), sex, NA)),
+         smoker = as.factor(smoker),
+         coffee = as.factor(coffee),
+         edul = as.factor(edul),
+         rhmfact = as.logical(as.numeric(rhmfact)),
+         anticcp = as.logical(as.numeric(anticcp)),
+         cosdmard = as.factor(cosdmard),
+         prevmtx = as.logical(as.numeric(prevmtx)), 
+         BL_ACREULARrem = as.logical(as.numeric(BL_ACREULARrem)),
+         T_ACREULARrem = as.logical(as.numeric(T_ACREULARrem)), 
+         BL_pass1 = as.logical(BL_pass1-1),
+         T_pass1 = as.logical(T_pass1-1), 
+         BL_wpai_1 = as.logical(as.numeric(BL_wpai_1)),
+         T_wpai_1 = as.logical(as.numeric(T_wpai_1))) %>%
+  select(-dob, -trtdiscdt, -diagdt, -sympdebdt, -bldt)
+#Fix BL drugs
+data$BL_Methotrexate[data$cosdmard == "MTX"] <- TRUE
+data$BL_otherDmards <- data$cosdmard == "Other sDMARDs"
+data$BL_Prednisolone <- data$BL_Prednisolone | data$BL_Prednisone
+data <- data %>% select(-BL_Prednisone, -cosdmard)
+data$BL_otherDmards[data$BL_Sulfasalazine | data$BL_Prednisolone] <- FALSE
+#Remove variables with more than 70% missing
+temp <- colMeans(is.na(data))
+data <- data %>% select(-all_of(names(temp)[which(temp > 0.7)]))
+remove(temp)
+
+MyMiceModel <- mice::mice(data = data, m = 1, seed = 123, maxit = 1, remove_collinear=FALSE)
+CompleteData <- mice::complete(MyMiceModel)
+
+CompleteData <- CompleteData %>% select(Z_value, trtgrp, Rem, center, sex, age,
+                                        smoker, rhmfact, anticcp, prevmtx, 
+                                        all_of(colnames(CompleteData)
+                                               [grepl("BL_", 
+                                                      colnames(CompleteData))]),
+                                        all_of(paste0("comorb", 1:21)))
+#Remove ASDAS & BASDAI
+CompleteData <- CompleteData %>% select(-BL_asdas, -BL_basdai)
+
+#Experiments for fun
+
+my_base_model <- glm(Rem ~ ., data = CompleteData)
+summary(my_base_model)
