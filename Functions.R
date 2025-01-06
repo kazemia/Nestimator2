@@ -7,6 +7,7 @@ library(stringr)
 library(lpSolve)
 library(doParallel)
 library(dplyr)
+library(doRNG)
 
 MakeP_Z <- function(data, Z_column, T_column, C_columns = NULL, 
                     parametric = FALSE){
@@ -30,10 +31,15 @@ MakeP_Z <- function(data, Z_column, T_column, C_columns = NULL,
         my_formula <- paste(my_formula, "+", c)
       }
     }
-    my_formula %>% as.formula() %>% nnet::multinom(data = data) %>% 
+    data[[Z_column]] <- as.factor(data[[Z_column]])
+    wide_effects <- my_formula %>% as.formula() %>% 
+      nnet::multinom(data = data) %>% 
       marginaleffects::avg_predictions(variables = Z_column) %>%
       select(all_of(c("group", "estimate", Z_column))) %>%
-      pivot_wider(names_from = group, values_from = estimate) %>% return()
+      pivot_wider(names_from = group, values_from = estimate) %>% 
+      arrange(by = eval(parse(text = Z_column)))
+    wide_effects[[Z_column]] <- as.numeric(wide_effects[[Z_column]])
+    return(wide_effects)
     
   }else{
     P_Z <- data %>% group_by(eval(parse(text = Z_column)), eval(parse(text = T_column))) %>%
@@ -75,13 +81,17 @@ MakeQ_Z <- function(data, Z_column, T_column, Y_column, C_columns = NULL,
         my_formula <- paste(my_formula, "+", c)
       }
     }
-    long_effects <- my_formula %>% as.formula() %>% glm(data = data, family = family) %>% 
+    data[[Z_column]] <- as.factor(data[[Z_column]])
+    long_effects <- my_formula %>% as.formula() %>% 
+      glm(data = data, family = family) %>% 
       marginaleffects::avg_predictions(variables = c(Z_column, T_column)) %>%
       select(all_of(c(T_column, "estimate", Z_column)))
     colnames(long_effects) <- c("group", "estimate", Z_column)
     wide_effects <- long_effects %>% 
       pivot_wider(names_from = group, values_from = estimate) %>%
-      select(all_of(colnames(P_Z)))
+      select(all_of(colnames(P_Z))) %>% 
+      arrange(by = eval(parse(text = Z_column)))
+    wide_effects[[Z_column]] <- as.numeric(wide_effects[[Z_column]])
     Z_col <- wide_effects[[Z_column]]
     result <- (wide_effects %>% select(-all_of(Z_column)))*(P_Z %>% select(-all_of(Z_column)))
     result[[Z_column]] <- Z_col
@@ -102,6 +112,46 @@ MakeQ_Z <- function(data, Z_column, T_column, Y_column, C_columns = NULL,
     rownames(Q_Z) <- 1:nrow(Q_Z)
     Q_Z[is.na(Q_Z)] <- 0
     return(Q_Z)
+  }
+}
+
+MakeV_Z <- function(data, Z_column, T_column, Y_column, C_columns = NULL,
+                    parametric = FALSE, family = NULL, P_Z = NULL){
+  #Function: MakeV_Z
+  #Purpose: Calculate Var(Response*1[Treatment = t]|Instrument)
+  #Input:
+  #       data: is the original data set as data frame
+  #       Z_column: is the name of the column in data for the instrument
+  #       T_column: is the name of the column in data for the treatment
+  #       Y_column: is the name of the column in data for the response
+  #       C_columns: is a vector of the names of the columns in the data to 
+  #                  adjust for
+  #       parametric: is an indicator saying whether or not the estimation 
+  #                   should be done parametrically with glm
+  #       family: family input in the glm regression model
+  #       P_Z: The P_Z to be used to multiply with the marginal effects.
+  #            Must be passed for parametric modelling.
+  #Returns: A data frame of expectations with a column for every value of the
+  #         treatment and a row for every value of the instrument.
+  #Note: Adjustment for C_columns is only available with parametric modelling
+  if(parametric){
+    return("Error: parametric variance estimation is not developed yet")
+    
+  }else{
+    V_Z <- data %>% group_by(eval(parse(text = Z_column)), eval(parse(text = T_column))) %>%
+      summarise(Y = var(eval(parse(text = Y_column))),
+                Weight = n(), .groups = "keep") %>% 
+      as.data.frame()
+    colnames(V_Z) <- c(Z_column, T_column, "Y", "Weight")
+    V_Z <- V_Z %>% group_by(eval(parse(text = Z_column))) %>%
+      mutate(Denominator = sum(Weight)) %>%
+      mutate(Y = Y*((Weight/Denominator)^2)) %>% as.data.frame()
+    V_Z <- V_Z %>% select(all_of(c(Z_column, T_column, "Y")))
+    V_Z <- V_Z %>% reshape(direction = "wide", idvar = Z_column, timevar = T_column)
+    colnames(V_Z)[2:ncol(V_Z)] <- substring(colnames(V_Z)[2:ncol(V_Z)], 3)
+    rownames(V_Z) <- 1:nrow(V_Z)
+    V_Z[is.na(V_Z)] <- 0
+    return(V_Z)
   }
 }
 
@@ -404,12 +454,10 @@ BinarySimulator <- function(ZT, VT, VY, TY, n, OR = FALSE){
   return(data.frame(Z = Z, T = T, Y = Y))
 }
 
-BSCICalculator <- function(n, data, Z_column, T_column, Y_column, TLevels, Z,
-                           alpha = 0.05, n_cores = 14, Cap = FALSE,
+BSCICalculator <- function(n, data, Z_column, T_column, Y_column, KB, b,
+                           alpha = 0.05, n_cores = 14, Cap = FALSE, 
+                           C_columns = NULL, parametric = FALSE, family = NULL,
                            MakeP_Z. = MakeP_Z, MakeQ_Z. = MakeQ_Z,
-                           GenerateA. = GenerateA, T_decider. = T_decider, 
-                           MakeR. = MakeR, MakeKB. = MakeKB,
-                           KbSolver. = KbSolver,
                            P_SigmaIdentifier. = P_SigmaIdentifier,
                            LATEIdentifier. = LATEIdentifier){
   #Function: BSCICalculator
@@ -428,22 +476,17 @@ BSCICalculator <- function(n, data, Z_column, T_column, Y_column, TLevels, Z,
   #         Alpha: P-value for two sided test
   #         BSData: The result of bootstrapping
   #         CIs: data frame of confidence intervals
-  StatisticCalculator <- function(counter, data, Z_column, T_column, Y_column, 
-                                  TLevels, Z, MakeP_Z.. = MakeP_Z.,
+  StatisticCalculator <- function(counter, data, Z_column, T_column, Y_column,
+                                  KB, b, C_columns, 
+                                  parametric, family,
+                                  MakeP_Z.. = MakeP_Z.,
                                   MakeQ_Z.. = MakeQ_Z.,
-                                  GenerateA.. = GenerateA.,
-                                  T_decider.. = T_decider., 
-                                  MakeR.. = MakeR., MakeKB.. = MakeKB.,
-                                  KbSolver.. = KbSolver.,
                                   P_SigmaIdentifier.. = P_SigmaIdentifier.,
                                   LATEIdentifier.. = LATEIdentifier.){
     data <- data[sample(nrow(data), nrow(data), replace=T),]
-    P_Z <- MakeP_Z..(data, Z_column, T_column)
-    Q_Z <- MakeQ_Z..(data, Z_column, T_column, Y_column)
-    A <- GenerateA..(TLevels)
-    R <- MakeR..(A, Z, T_decider..)
-    KB <- MakeKB..(R, TLevels, 5)
-    b <- KbSolver..(KB,4)
+    P_Z <- MakeP_Z..(data, Z_column, T_column, C_columns, parametric)
+    Q_Z <- MakeQ_Z..(data, Z_column, T_column, Y_column, C_columns, parametric, 
+                     family, P_Z)
     P_Sigma <- P_SigmaIdentifier..(P_Z, KB, b)
     Contrasts <- LATEIdentifier..(Q_Z, KB, b, P_Sigma)
     return(unlist(Contrasts))
@@ -451,13 +494,12 @@ BSCICalculator <- function(n, data, Z_column, T_column, Y_column, TLevels, Z,
   myCluster <- makeCluster(n_cores)
   registerDoParallel(myCluster)
   registerDoRNG(1234)
-  boot_b <- foreach(b=idiv(n, chunks=getDoParWorkers()), .combine = "cbind",
-                    .packages = c("dplyr", "tidyverse", "stringr",
-                                  "lpSolve")) %dopar% {
-                                    sapply(1:b, StatisticCalculator, data,
-                                           Z_column, T_column,Y_column,
-                                           TLevels, Z)
-                                  }
+  boot_b <- foreach(bb=idiv(n, chunks=getDoParWorkers()), .combine = "cbind",
+                    .packages = c("dplyr", "tidyverse", "stringr")) %dopar% {
+                                    sapply(1:bb, StatisticCalculator, data,
+                                           Z_column, T_column,Y_column, 
+                                           KB, b, C_columns, parametric, family)
+                    }
   stopCluster(myCluster)
   bootstrap_data <- t(boot_b)
   bootstrap_data <- as.data.frame(bootstrap_data)
@@ -507,8 +549,7 @@ NaiveIV <- function(tt, data, Z, T_column, Z_column, Y_column){
 }
 
 PseudoPopulator <- function(tt, data, KB, b, P_Sigma,
-                            Z_column, T_column, Y_column,
-                            tolerance, Pi_index = 1){
+                            Z_column, T_column, Y_column, Pi_index = 1){
   #Function: PseudoPopulator
   #Purpose: Generate a pseudo-population with weights corresponding to the
   #         non-parametric method
@@ -521,7 +562,6 @@ PseudoPopulator <- function(tt, data, KB, b, P_Sigma,
   #       Z_column: is the name of the column in data for the instrument
   #       T_column: is the name of the column in data for the treatment
   #       Y_column: is the name of the column in data for the response
-  #       tolerance: The number of decimals of accuracy
   #       Pi_index: The population for which LATE should be calculated.
   #                 It should be an integer between 1 and length(Pis$tt), where
   #                 Pis is the output of PiIdentifier

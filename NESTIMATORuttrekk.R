@@ -241,7 +241,7 @@ MyData <- MyData %>%
 
 #Fix missing RF factor and antiCCP
 library(readxl)
-MyLabData <- read_excel("Data/tdToTSD/td/ExtendedDataExtraction_2024-8-29.xlsx", 
+MyLabData <- read_excel(paste0(pdir,"ExtendedDataExtraction_2024-8-29.xlsx"), 
                         sheet = "DiagnosticTestsLabData") %>% 
   filter(DiagnosticTestLab %in% c("RF IgM", "CCP")) %>% 
   select(PatientID, DiagnosticTestLab, Pos_Neg_Inconclusive, 
@@ -280,35 +280,87 @@ Z <- list("2010" = c("Inf", "Gol", "Cer", "Eta", "Ada"),
 data <- MyData
 remove(MyData)
 data$Z_value <- NA
-for(y in 2010:2013){
-  StartDate <- as.Date(paste0(y, "-01-31"), "%Y-%m-%d")
-  EndDate <- as.Date(paste0(y+1, "-02-01"), "%Y-%m-%d")
+data$PeriodDay <- NA
+Z_decider <- function(data, washout = 0) {
+  for(y in 2010:2013){
+    StartDate <- as.Date(paste0(y, "-01-31"), "%Y-%m-%d") + washout
+    EndDate <- as.Date(paste0(y+1, "-02-01"), "%Y-%m-%d") + washout
+    data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+    data$PeriodDay[(data$bldt > StartDate) & (data$bldt < EndDate)] <- 
+      data$bldt[(data$bldt > StartDate) & (data$bldt < EndDate)] - StartDate
+  }
+  y <- 2014
+  StartDate <- as.Date(paste0(y, "-01-31"), "%Y-%m-%d") + washout
+  EndDate <- as.Date(paste0(y+1, "-03-01"), "%Y-%m-%d") + washout
   data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
-}
-y <- 2014
-StartDate <- as.Date(paste0(y, "-01-31"), "%Y-%m-%d")
-EndDate <- as.Date(paste0(y+1, "-03-01"), "%Y-%m-%d")
-data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
-y <- 2015
-StartDate <- as.Date(paste0(y, "-02-28"), "%Y-%m-%d")
-EndDate <- as.Date(paste0(y+1, "-03-01"), "%Y-%m-%d")
-data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
-y <- 2016
-StartDate <- as.Date(paste0(y, "-02-29"), "%Y-%m-%d")
-EndDate <- as.Date(paste0(y+1, "-03-01"), "%Y-%m-%d")
-data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
-y <- 2017
-StartDate <- as.Date(paste0(y, "-02-28"), "%Y-%m-%d")
-EndDate <- as.Date(paste0(y+1, "-02-01"), "%Y-%m-%d")
-data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
-for(y in 2018:2023){
-  StartDate <- as.Date(paste0(y, "-01-31"), "%Y-%m-%d")
-  EndDate <- as.Date(paste0(y+1, "-02-01"), "%Y-%m-%d")
+  data$PeriodDay[(data$bldt > StartDate) & (data$bldt < EndDate)] <- 
+    data$bldt[(data$bldt > StartDate) & (data$bldt < EndDate)] - StartDate
+  y <- 2015
+  StartDate <- as.Date(paste0(y, "-02-28"), "%Y-%m-%d") + washout
+  EndDate <- as.Date(paste0(y+1, "-03-01"), "%Y-%m-%d") + washout
   data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+  data$PeriodDay[(data$bldt > StartDate) & (data$bldt < EndDate)] <- 
+    data$bldt[(data$bldt > StartDate) & (data$bldt < EndDate)] - StartDate
+  y <- 2016
+  StartDate <- as.Date(paste0(y, "-02-29"), "%Y-%m-%d") + washout
+  EndDate <- as.Date(paste0(y+1, "-03-01"), "%Y-%m-%d") + washout
+  data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+  data$PeriodDay[(data$bldt > StartDate) & (data$bldt < EndDate)] <- 
+    data$bldt[(data$bldt > StartDate) & (data$bldt < EndDate)] - StartDate
+  y <- 2017
+  StartDate <- as.Date(paste0(y, "-02-28"), "%Y-%m-%d") + washout
+  EndDate <- as.Date(paste0(y+1, "-02-01"), "%Y-%m-%d") + washout
+  data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+  data$PeriodDay[(data$bldt > StartDate) & (data$bldt < EndDate)] <- 
+    data$bldt[(data$bldt > StartDate) & (data$bldt < EndDate)] - StartDate
+  for(y in 2018:2023){
+    StartDate <- as.Date(paste0(y, "-01-31"), "%Y-%m-%d") + washout
+    EndDate <- as.Date(paste0(y+1, "-02-01"), "%Y-%m-%d") + washout
+    data$Z_value[(data$bldt > StartDate) & (data$bldt < EndDate)] <- y-2009
+    data$PeriodDay[(data$bldt > StartDate) & (data$bldt < EndDate)] <- 
+      data$bldt[(data$bldt > StartDate) & (data$bldt < EndDate)] - StartDate
+  }
+  return(data)
 }
+
+data <- Z_decider(data)
+data <- data %>% filter(!is.na(Z_value))
+data$leftover = NA
+data$leftover[data$Z_value == 1] <- FALSE
+data$leftover[data$Z_value > 1] <- 
+  unname((data$trtgrp[data$Z_value > 1] == 
+            sapply(Z[data$Z_value[data$Z_value > 1]-1], function(x) x[1])) & 
+           (data$trtgrp[data$Z_value > 1] != 
+              sapply(Z[data$Z_value[data$Z_value > 1]], function(x) x[1])))
+hist((data %>% filter(leftover & (Z_value %in% c(3,5))))$PeriodDay, xlab = "Days since NDPC change",
+     main = "Probability of picking previous winner", breaks = (0:40)*10, probability = T)
+
+data <- data %>% select(-leftover, -PeriodDay)
+#backup_data <- data
+#data <- data %>% filter(Z_value < 12)
+#leftover_prob <- c()
+#for (washout in (0:10)*10) {
+#  data$Z_value <- NA
+#  data <- Z_decider(data, washout = washout)
+#  leftover_data <- data %>% filter(!is.na(Z_value))
+#  leftover_data$leftover = NA
+#  leftover_data$leftover[leftover_data$Z_value == 1] <- FALSE
+#  leftover_data$leftover[leftover_data$Z_value > 1] <- 
+#    (leftover_data$trtgrp[leftover_data$Z_value > 1] == 
+#       sapply(Z[leftover_data$Z_value[leftover_data$Z_value > 1]-1], 
+#              function(x) x[1])) & 
+#    (leftover_data$trtgrp[leftover_data$Z_value > 1] != 
+#       sapply(Z[leftover_data$Z_value[leftover_data$Z_value > 1]], 
+#              function(x) x[1]))
+#  leftover_prob <- c(leftover_prob, mean(leftover_data$leftover))
+#}
+#plot((0:10)*10, leftover_prob)
+
+
 
 
 #Handle the rest of the missingness
+#Remove unnecessary variables and correct the type
 data <- data %>% select(-tcid, -patid, -trtfull, -wdrreasc, -lvno, -lvdt,
                             -wdrdt, -diaggrp, -inv, -nurse, -prevbiol,
                             -BL_das28rem, -BL_das28crprem, -BL_cdairem, -BL_mcii,
@@ -317,9 +369,9 @@ data <- data %>% select(-tcid, -patid, -trtfull, -wdrreasc, -lvno, -lvdt,
          trtgrp = as.factor(trtgrp),
          wdrreas = as.factor(wdrreas),
          age = ifelse(!is.na(age), age, (bldt - dob)/365),
-         treatmentdur = as.numeric(trtdiscdt-bldt),
-         diagdur = as.numeric(diagdt-bldt),
-         sympdur = as.numeric(sympdebdt-bldt),
+         T_treatmentdur = as.numeric(trtdiscdt-bldt),
+         BL_diagdur = as.numeric(bldt-diagdt),
+         BL_sympdur = as.numeric(bldt-sympdebdt),
          sex = as.factor(ifelse(sex %in% c("Male", "Female"), sex, NA)),
          smoker = as.factor(smoker),
          coffee = as.factor(coffee),
@@ -346,9 +398,14 @@ temp <- colMeans(is.na(data))
 data <- data %>% select(-all_of(names(temp)[which(temp > 0.7)]))
 remove(temp)
 
-MyMiceModel <- mice::mice(data = data, m = 1, seed = 123, maxit = 1, remove_collinear=FALSE)
-CompleteData <- mice::complete(MyMiceModel)
+#data$bldt <- as.numeric(data$bldt)
+data$Z_value <- as.factor(data$Z_value)
 
+#Impute the rest of the missing data
+MyMiceModel <- mice::mice(data = data %>% select(-trtgrp, -Z_value), m = 1, seed = 123, maxit = 1)
+CompleteData <- mice::complete(MyMiceModel)
+CompleteData$trtgrp <- data$trtgrp
+CompleteData$Z_value <- data$Z_value
 CompleteData <- CompleteData %>% select(Z_value, trtgrp, Rem, center, sex, age,
                                         smoker, rhmfact, anticcp, prevmtx, 
                                         all_of(colnames(CompleteData)
@@ -358,7 +415,108 @@ CompleteData <- CompleteData %>% select(Z_value, trtgrp, Rem, center, sex, age,
 #Remove ASDAS & BASDAI
 CompleteData <- CompleteData %>% select(-BL_asdas, -BL_basdai)
 
-#Experiments for fun
+colnames(CompleteData)[33:53] <- my_comorbidities
 
-my_base_model <- glm(Rem ~ ., data = CompleteData)
-summary(my_base_model)
+
+data <- data %>% select(Z_value, trtgrp, Rem, center, sex, age,
+                                        smoker, rhmfact, anticcp, prevmtx, 
+                                        all_of(colnames(data)
+                                               [grepl("BL_", 
+                                                      colnames(data))]),
+                                        all_of(paste0("comorb", 1:21)))
+#Remove ASDAS & BASDAI
+data <- data %>% select(-BL_asdas, -BL_basdai)
+
+colnames(data)[33:53] <- my_comorbidities
+
+CompleteData <- CompleteData %>% mutate(BL_wpai_1 = as.logical(BL_wpai_1),
+                                        prevmtx = as.logical(prevmtx),
+                                        anticcp = as.logical(anticcp),
+                                        rhmfact = as.logical(rhmfact),
+                                        Rem = as.logical(Rem),
+                                        BL_diagdur = BL_diagdur/365.25,
+                                        BL_sympdur = BL_sympdur/365.25)
+data <- data %>% mutate(BL_wpai_1 = as.logical(BL_wpai_1),
+                                        prevmtx = as.logical(prevmtx),
+                                        anticcp = as.logical(anticcp),
+                                        rhmfact = as.logical(rhmfact),
+                                        Rem = as.logical(Rem),
+                                        BL_diagdur = BL_diagdur/365.25,
+                                        BL_sympdur = BL_sympdur/365.25)
+
+
+save(CompleteData, file = paste0(pdir, "CompleteData.Rdata"))
+save(data, file = paste0(pdir, "data.Rdata"))
+
+
+#The code after this is experimental
+
+
+
+
+
+
+
+
+
+#Scale the numeric data
+#Remove wdrreas
+Main_data <- CompleteData %>% select(Z_value, trtgrp, Rem)
+Cov_data <- CompleteData %>% select(-Z_value, -trtgrp, -Rem) %>% 
+  fastDummies::dummy_cols(remove_most_frequent_dummy = TRUE,
+                          remove_selected_columns = TRUE) %>% 
+  mutate_all(as.numeric) %>% scale() %>% as.data.frame()
+
+#Perform pca on covariate data and pick enough components to cover 90% variance
+pca_model <- princomp(Cov_data)
+summary(pca_model)
+pca_data <- predict(pca_model, Cov_data)[,1:29] %>% as.data.frame()
+
+#Tidy up
+pca_data <- cbind(Main_data, pca_data)
+pca_data$Rem <- as.logical(pca_data$Rem)
+remove(Cov_data, Main_data, MyMiceModel, pca_model)
+
+#GLM base model
+my_base_model <- glm(Rem ~ ., data = pca_data %>% select(-Z_value), family = "binomial")
+my_base_model %>% marginaleffects::avg_comparisons(variables = list(trtgrp = "pairwise"), type = "response", newdata = "marginalmeans")
+
+
+#my_base_model <- glm(Rem ~ ., data = CompleteData %>% select(-Z_value), family = "binomial")
+#my_base_model %>% marginaleffects::avg_comparisons(variables = list(trtgrp = "pairwise"), type = "response", newdata = "marginalmeans")
+
+my_iptw <- ce_estimate(y = pca_data$Rem, 
+                       x = pca_data %>% select(-Rem, -trtgrp, -Z_value), 
+                       w = as.numeric(pca_data$trtgrp), 
+                       method = "IPTW-SL", estimand = "ATE", 
+                       sl_library =  c("SL.glm", "SL.glmnet", "SL.rpart"))
+summary(my_iptw)
+
+pca_data$w <- my_iptw$weight
+w_q <- quantile(pca_data$w, probs = c(0.05,0.95))
+pca_data <- pca_data %>% mutate(h_w = (w < w_q[1]) | (w > w_q[2]))
+
+library(ggplot2)
+ggplot(pca_data %>% filter(trtgrp == TLevels[5]), aes(x = Comp.1, y = Comp.2, colour = h_w)) + geom_point()
+
+CompleteData$w <- my_iptw$weight
+w_q <- quantile(CompleteData$w, probs = c(0.05,0.95))
+CompleteData <- CompleteData %>% mutate(h_w = (w < w_q[1]) | (w > w_q[2]))
+
+for (t in TLevels) {
+  tree <- rpart::rpart(h_w ~ ., 
+                       data = CompleteData %>% filter(trtgrp == t) %>% 
+                         select(-w, -Z_value, -Rem, -trtgrp),
+                       control=rpart::rpart.control(cp=.0001))
+  best <- tree$cptable[which.min(tree$cptable[,"xerror"]),"CP"]
+  pruned_tree <- rpart::prune(tree, cp=best)
+  rpart.plot::prp(pruned_tree, main = t)
+}
+
+(CompleteData %>% group_by(Z_value) %>% summarise(Rem = mean(Rem)) %>% 
+  mutate(Z_value = as.numeric(Z_value)) %>% ggplot(aes(x = Z_value, y = Rem))) +
+  geom_point()
+
+
+
+
