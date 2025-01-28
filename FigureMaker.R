@@ -42,4 +42,6 @@ ggplot(my_fig_data, aes(x = value, y = y_position, color = type)) +
     color = "Analysis"
   ) +
   theme_minimal() +
-  theme(axis.text.y = element_text(size = 10))
+  theme(axis.text.y = element_text(size = 10)) + 
+  annotate("text", x = 1, y = 5.5, label = "Favours left side", angle = 90) + 
+  annotate("text", x = -0.5, y = 5.5, label = "Favours right side", angle = 90)

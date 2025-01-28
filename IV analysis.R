@@ -43,8 +43,6 @@ R <- MakeR(A, Z, T_decider)
 KB <- MakeKB(R, TLevels, 4)
 b <- KbSolver(KB, 3)
 Pis <- PiIdentifier(b)
-
-
 CompleteData$Z_value <- as.numeric(CompleteData$Z_value)
 P_Z <- MakeP_Z(CompleteData, "Z_value", "trtgrp")
 P_Sigma <- P_SigmaIdentifier(P_Z, KB, b)
@@ -52,7 +50,7 @@ ReliableLatesList <- P_Sigma$WA %>%
   lapply(function(x) x[length(x)] > 0.1) %>% 
   unlist() %>% which() %>% names()
 
-ResMaker <- function(CompleteData){
+ResMaker <- function(CompleteData, KB = KB, b = b){
   P_Z <- MakeP_Z(CompleteData, "Z_value", "trtgrp")
   Q_Z <- MakeQ_Z(CompleteData, "Z_value", "trtgrp", "Rem")
   P_Sigma <- P_SigmaIdentifier(P_Z, KB, b)
@@ -120,6 +118,13 @@ colnames(my_seronegative_comparisons)[2:5] <- paste(colnames(my_seronegative_com
 knitr::kable(my_comparisons, "latex")
 knitr::kable(cbind(my_young_comparisons, my_old_comparisons %>% select(-contrast)), "latex")
 knitr::kable(cbind(my_seronegative_comparisons, my_seropositive_comparisons %>% select(-contrast)), "latex")
+
+
+foundR <- MakeR(foundA, Z, T_decider)
+foundKB <- MakeKB(foundR, TLevels, 4)
+foundb <- KbSolver(foundKB, 3)
+foundPis <- PiIdentifier(foundb)
+my_found_comparisons <- CompleteData %>% ResMaker(foundKB, foundb)
 
 Pz <- (summary(as.factor(CompleteData$Z_value))/nrow(CompleteData))
 
@@ -206,5 +211,8 @@ LATEs_adj <- LATEIdentifier(Q_Z_adj, KB, b, P_SigmaIdentifier(P_Z_adj, KB, b))
 BSCIs_adj <- BSCICalculator(10000, CompleteData2, "Z_value", "trtgrp", "Rem", 
                         KB, b, Cap = TRUE, C_columns = adj_cols, parametric = T,
                         family = "binomial")
+
+
+
 
 

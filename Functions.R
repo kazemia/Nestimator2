@@ -246,7 +246,7 @@ KbSolver <- function(KB, tolerance){
     K_t <- rbind(KK_t[[1]][-c(freeVars, fixedVars), -c(freeVars, fixedVars)], 
                  KK_t[[2]][-c(freeVars, fixedVars), -c(freeVars, fixedVars)])
     numcols <- ncol(K_t)
-    mylp <- lp('max', rep(0,numcols), rbind(K_t, K_t),
+    mylp <- lpSolve::lp('max', rep(0,numcols), rbind(K_t, K_t),
                         c(rep("<", numcols), rep(">", numcols)),
                         c(rep(10^(-tolerance), numcols), rep(-10^(-tolerance), numcols)),
                         all.bin = TRUE, num.bin.solns=((2^numcols) + 1), use.rw = FALSE)
@@ -331,6 +331,97 @@ P_SigmaIdentifier <- function(P_Z, KB, b){
   names(BP_S) <- names(b)
   return(list(E1 = BP_S1, E2 = BP_S2, WA = BP_S))
 }
+
+MaxAIdentifier <- function(TLevels, Z, P_Z, minA, likelyA, 
+                           minConnections = 2, 
+                           ReliabilityCutOff = 0.1, n_cores = 14, upwardsStep = 4){
+  likelyA <- lapply(likelyA, sort)
+  minA <- lapply(minA, sort)
+  likelyA <- likelyA[!(likelyA %in% minA)]
+  nonAT <- likelyA[sapply(likelyA, length) > 1]
+  AT <- likelyA[sapply(likelyA, length) == 1]
+  maxSize <- length(nonAT)
+  Found <- FALSE
+  AllSets <- expand.grid(rep(list(c(FALSE, TRUE)), maxSize))
+  SetSizes <- rowSums(AllSets)
+  Found_func <- function(A_temp_index){
+    A_temp <- nonAT[unlist(possibleSets[A_temp_index,])]
+    A_temp <- c(A_temp, minA, AT)
+    R <- MakeR(A_temp, Z, T_decider)
+    KB <- MakeKB(R, TLevels, 4)
+    b <- KbSolver(KB, 3)
+    P_Sigma <- P_SigmaIdentifier(P_Z, KB, b)
+    ReliableLatesList <- P_Sigma$WA %>% 
+      lapply(function(x) max(x) > ReliabilityCutOff) %>% 
+      unlist() %>% which() %>% names()
+    degrees <- sapply(TLevels, function(x) sum(grepl(x, ReliableLatesList)))
+    return(min(degrees))
+  }
+  myCluster <- makeCluster(n_cores)
+  clusterExport(myCluster, c("MakeR", "T_decider", "MakeKB", "KbSolver", 
+                             "P_SigmaIdentifier"))
+  clusterExport(myCluster, c("Z", "TLevels", "P_Z", "minA", "AT",
+                             "ReliabilityCutOff", "nonAT"), envir = environment())
+  invisible(clusterEvalQ(myCluster, {
+    library(dplyr)
+    library(stringr)
+  }))
+  while ((maxSize >= 0) & (!Found)) {
+    possibleSets <- AllSets[SetSizes == maxSize,]
+    clusterExport(myCluster, c("possibleSets"), envir = environment())
+    degrees_vec <- parSapply(myCluster, 1:nrow(possibleSets), Found_func)
+    Found_vec <- (degrees_vec >= minConnections)
+    Found <- (sum(Found_vec) > 0)
+    maxSize <- maxSize - 1
+  }
+  #ADD A FOR LOOP HERE FOR MORE THAN 1 FOUND SET
+  minA <- c(minA, nonAT[unlist(possibleSets[Found_vec,])])
+  
+  fullA <- GenerateA(TLevels)
+  fullA <- lapply(fullA, sort)
+  minA <- lapply(minA, sort)
+  fullA <- fullA[!(fullA %in% minA)]
+  nonAT <- fullA[sapply(fullA, length) > 1]
+  maxSize <- max(upwardsStep, length(nonAT))
+  AllSets <- expand.grid(rep(list(c(FALSE, TRUE)), length(nonAT)))
+  SetSizes <- rowSums(AllSets)
+  clusterExport(myCluster, c("minA", "nonAT"), envir = environment())
+  for (s in maxSize:1) {
+    possibleSets <- AllSets[SetSizes == s,]
+    clusterExport(myCluster, c("possibleSets"), envir = environment())
+    degrees_vec <- parSapply(myCluster, 1:nrow(possibleSets), Found_func)
+    Found_vec <- (degrees_vec >= minConnections)
+    Found <- (sum(Found_vec) > 0)
+    if (Found){      
+      minA <- c(minA, nonAT[unlist(possibleSets[Found_vec,])])
+      nonAT <- nonAT[!(nonAT %in% minA)]
+      AllSets <- expand.grid(rep(list(c(FALSE, TRUE)), length(nonAT)))
+      SetSizes <- rowSums(AllSets)
+      clusterExport(myCluster, c("minA", "nonAT"), envir = environment())
+    }
+  }
+  s <- 16
+  while((!Found) & (s>0)){
+    possibleSets <- AllSets[SetSizes == s,]
+    clusterExport(myCluster, c("possibleSets"), envir = environment())
+    degrees_vec <- parSapply(myCluster, 1:nrow(possibleSets), Found_func)
+    Found_vec <- (degrees_vec >= minConnections)
+    Found <- (sum(Found_vec) > 0)
+    s <- s-1
+  }
+  
+  stopCluster(myCluster)
+  
+  if(Found){
+    c(minA, AT) %>% return()
+  }else{
+    return("We found no sets.")
+  }
+}
+
+
+
+
 
 LATEIdentifier <- function(Q_Z, KB, b, P_Sigma, RR = FALSE, AverageProb = FALSE){
   #Function: LATEIdentifier
