@@ -47,10 +47,10 @@ CompleteData$Z_value <- as.numeric(CompleteData$Z_value)
 P_Z <- MakeP_Z(CompleteData, "Z_value", "trtgrp")
 P_Sigma <- P_SigmaIdentifier(P_Z, KB, b)
 ReliableLatesList <- P_Sigma$WA %>% 
-  lapply(function(x) x[length(x)] > 0.1) %>% 
+  lapply(function(x) max(x) > 0.1) %>% 
   unlist() %>% which() %>% names()
 
-ResMaker <- function(CompleteData, KB = KB, b = b){
+ResMaker <- function(CompleteData, KB = KB, b = b, ReliableLatesList = ReliableLatesList, onlyIV = FALSE){
   P_Z <- MakeP_Z(CompleteData, "Z_value", "trtgrp")
   Q_Z <- MakeQ_Z(CompleteData, "Z_value", "trtgrp", "Rem")
   P_Sigma <- P_SigmaIdentifier(P_Z, KB, b)
@@ -58,20 +58,42 @@ ResMaker <- function(CompleteData, KB = KB, b = b){
   
   BSCIs <- BSCICalculator(10000, CompleteData, "Z_value", "trtgrp", "Rem", 
                           KB, b, Cap = TRUE)
-  
-  ReliableLates <- lapply(LATEs, function(x) x[length(x)])[ReliableLatesList] %>% 
+  largestSet <- lapply(b, function(x){
+    if (is.null(dim(x)))
+      return(1)
+    return(which(rowSums(x) == max(rowSums(x))))
+    }) %>% unlist()
+  ReliableLates <- lapply(1:length(LATEs), function(x) {
+    if(length(LATEs[[x]]) == 1)
+      return(LATEs[[x]])
+    return(LATEs[[x]][largestSet[x]])
+    })
+  names(ReliableLates) <- names(LATEs)
+  ReliableLates <- ReliableLates[ReliableLatesList] %>% 
     unlist() %>% as.data.frame()
   ReliableLates$contrast = rownames(ReliableLates)
   colnames(ReliableLates) <- c("IV_estimate", "contrast")
   rownames(ReliableLates) <- 1:nrow(ReliableLates)
   ReliableCIs <- BSCIs$CIs
   ReliableCIs$contrast <- rownames(ReliableCIs)
-  ReliableCIs <- ReliableCIs %>% filter(!(contrast %in% c("Cer_Gol1", "Cer_Gol2"))) %>% 
-    mutate(contrast = ifelse(contrast == "Cer_Gol3", "Cer_Gol", contrast)) %>% 
-    filter(contrast %in% ReliableLatesList)
+  whichCIs <- sapply(ReliableLatesList, function(x){
+    if(x %in% ReliableCIs$contrast)
+      return(x)
+    return(paste0(x, largestSet[x]))
+  })
+  ReliableCIs <- ReliableCIs %>% filter(contrast %in% whichCIs) %>%
+    mutate(contrast = gsub('[0-9]+', '', contrast))
+  
   colnames(ReliableCIs) <- c("IV_conf.low", "IV_conf.high", "contrast")
   rownames(ReliableCIs) <- 1:nrow(ReliableCIs)
   IV_comparisons <- ReliableLates %>% left_join(ReliableCIs, by = "contrast")
+  
+  if(onlyIV){
+    IV_comparisons %>% 
+      mutate_if(is.numeric, round, digits = 2) %>% 
+      mutate(IV_CI = paste0("(", IV_conf.low, ",", IV_conf.high, ")"))%>%
+      select(contrast, IV_estimate, IV_CI) %>% return()
+  }
   
   my_base_model <- glm(Rem ~ ., data = CompleteData %>% select(-Z_value), family = "binomial")
   my_base_comparisons <- my_base_model %>% marginaleffects::avg_comparisons(variables = list(trtgrp = "pairwise"), type = "response", newdata = "marginalmeans")
@@ -124,6 +146,17 @@ foundR <- MakeR(foundA, Z, T_decider)
 foundKB <- MakeKB(foundR, TLevels, 4)
 foundb <- KbSolver(foundKB, 3)
 foundPis <- PiIdentifier(foundb)
+foundP_Sigma <- P_SigmaIdentifier(P_Z, foundKB, foundb)
+foundReliableLatesList <- foundP_Sigma$WA %>% 
+  lapply(function(x) max(x) > 0.1) %>% 
+  unlist() %>% which() %>% names()
+
+LATEs <- LATEIdentifier(Q_Z, foundKB, foundb, foundP_Sigma)
+
+BSCIs <- BSCICalculator(10000, CompleteData, "Z_value", "trtgrp", "Rem", 
+                        foundKB, foundb, Cap = TRUE)
+
+
 my_found_comparisons <- CompleteData %>% ResMaker(foundKB, foundb)
 
 Pz <- (summary(as.factor(CompleteData$Z_value))/nrow(CompleteData))
