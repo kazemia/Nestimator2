@@ -40,17 +40,17 @@ A <- list(
 TLevels <- levels(CompleteData$trtgrp)
 
 R <- MakeR(A, Z, T_decider)
-KB <- MakeKB(R, TLevels, 4)
-b <- KbSolver(KB, 3)
-Pis <- PiIdentifier(b)
+KB. <- MakeKB(R, TLevels, 4)
+b. <- KbSolver(KB., 3)
+Pis <- PiIdentifier(b.)
 CompleteData$Z_value <- as.numeric(CompleteData$Z_value)
 P_Z <- MakeP_Z(CompleteData, "Z_value", "trtgrp")
-P_Sigma <- P_SigmaIdentifier(P_Z, KB, b)
-ReliableLatesList <- P_Sigma$WA %>% 
+P_Sigma <- P_SigmaIdentifier(P_Z, KB., b.)
+ReliableLatesList. <- P_Sigma$WA %>% 
   lapply(function(x) max(x) > 0.1) %>% 
   unlist() %>% which() %>% names()
 
-ResMaker <- function(CompleteData, KB = KB, b = b, ReliableLatesList = ReliableLatesList, onlyIV = FALSE){
+ResMaker <- function(CompleteData, KB = KB., b = b., ReliableLatesList = ReliableLatesList., onlyIV = FALSE, ContrastVec = NULL){
   P_Z <- MakeP_Z(CompleteData, "Z_value", "trtgrp")
   Q_Z <- MakeQ_Z(CompleteData, "Z_value", "trtgrp", "Rem")
   P_Sigma <- P_SigmaIdentifier(P_Z, KB, b)
@@ -59,7 +59,7 @@ ResMaker <- function(CompleteData, KB = KB, b = b, ReliableLatesList = ReliableL
   BSCIs <- BSCICalculator(10000, CompleteData, "Z_value", "trtgrp", "Rem", 
                           KB, b, Cap = TRUE)
   largestSet <- lapply(b, function(x){
-    if (is.null(dim(x)))
+    if (length(x) <= ncol(KB[[1]]$K))
       return(1)
     return(which(rowSums(x) == max(rowSums(x))))
     }) %>% unlist()
@@ -89,43 +89,57 @@ ResMaker <- function(CompleteData, KB = KB, b = b, ReliableLatesList = ReliableL
   IV_comparisons <- ReliableLates %>% left_join(ReliableCIs, by = "contrast")
   
   if(onlyIV){
-    IV_comparisons %>% 
+    for (row in 1:nrow(IV_comparisons)) {
+      t1 <- IV_comparisons$contrast[row] %>% substr(1,3)
+      t2 <- IV_comparisons$contrast[row] %>% substr(5,7)
+      if(paste(t2, "-", t1) %in% ContrastVec){
+        IV_comparisons$contrast[row] <- paste(t2, "-", t1)
+        IV_comparisons$IV_estimate[row] <- -IV_comparisons$IV_estimate[row]
+        temp <- IV_comparisons$IV_conf.low[row]
+        IV_comparisons$IV_conf.low[row] <- -IV_comparisons$IV_conf.high[row]
+        IV_comparisons$IV_conf.high[row] <- -temp
+      }else{
+        IV_comparisons$contrast[row] <- paste(t1, "-", t2)
+      }
+    }
+    my_comparisons <- IV_comparisons %>% 
       mutate_if(is.numeric, round, digits = 2) %>% 
       mutate(IV_CI = paste0("(", IV_conf.low, ",", IV_conf.high, ")"))%>%
-      select(contrast, IV_estimate, IV_CI) %>% return()
-  }
-  
-  my_base_model <- glm(Rem ~ ., data = CompleteData %>% select(-Z_value), family = "binomial")
-  my_base_comparisons <- my_base_model %>% marginaleffects::avg_comparisons(variables = list(trtgrp = "pairwise"), type = "response", newdata = "marginalmeans")
-  
-  
-  for (row in 1:nrow(IV_comparisons)) {
-    t1 <- IV_comparisons$contrast[row] %>% substr(1,3)
-    t2 <- IV_comparisons$contrast[row] %>% substr(5,7)
-    if(paste(t2, "-", t1) %in% my_base_comparisons$contrast){
-      IV_comparisons$contrast[row] <- paste(t2, "-", t1)
-      IV_comparisons$IV_estimate[row] <- -IV_comparisons$IV_estimate[row]
-      temp <- IV_comparisons$IV_conf.low[row]
-      IV_comparisons$IV_conf.low[row] <- -IV_comparisons$IV_conf.high[row]
-      IV_comparisons$IV_conf.high[row] <- -temp
-    }else{
-      IV_comparisons$contrast[row] <- paste(t1, "-", t2)
+      select(contrast, IV_estimate, IV_CI)
+    return(my_comparisons)
+  }else{
+    my_base_model <- glm(Rem ~ ., data = CompleteData %>% select(-Z_value), family = "binomial")
+    my_base_comparisons <- my_base_model %>% marginaleffects::avg_comparisons(variables = list(trtgrp = "pairwise"), type = "response", newdata = "marginalmeans")
+    
+    
+    for (row in 1:nrow(IV_comparisons)) {
+      t1 <- IV_comparisons$contrast[row] %>% substr(1,3)
+      t2 <- IV_comparisons$contrast[row] %>% substr(5,7)
+      if(paste(t2, "-", t1) %in% my_base_comparisons$contrast){
+        IV_comparisons$contrast[row] <- paste(t2, "-", t1)
+        IV_comparisons$IV_estimate[row] <- -IV_comparisons$IV_estimate[row]
+        temp <- IV_comparisons$IV_conf.low[row]
+        IV_comparisons$IV_conf.low[row] <- -IV_comparisons$IV_conf.high[row]
+        IV_comparisons$IV_conf.high[row] <- -temp
+      }else{
+        IV_comparisons$contrast[row] <- paste(t1, "-", t2)
+      }
     }
+    
+    my_comparisons <- my_base_comparisons %>% 
+      select(contrast, estimate, conf.low, conf.high) %>% 
+      left_join(IV_comparisons, by = "contrast") %>% 
+      mutate_if(is.numeric, round, digits = 2) %>%
+      mutate(R_CI = paste0("(", conf.low, ",", conf.high, ")"),
+             IV_CI = ifelse(!is.na(IV_estimate), paste0("(", IV_conf.low, ",", IV_conf.high, ")"), "NA")) %>% 
+      select(contrast, estimate, R_CI, IV_estimate, IV_CI)
+    
+    return(my_comparisons)
   }
-  
-  my_comparisons <- my_base_comparisons %>% 
-    select(contrast, estimate, conf.low, conf.high) %>% 
-    left_join(IV_comparisons, by = "contrast") %>% 
-    mutate_if(is.numeric, round, digits = 2) %>%
-    mutate(R_CI = paste0("(", conf.low, ",", conf.high, ")"),
-           IV_CI = ifelse(!is.na(IV_estimate), paste0("(", IV_conf.low, ",", IV_conf.high, ")"), "NA")) %>% 
-    select(contrast, estimate, R_CI, IV_estimate, IV_CI)
-  
-  return(my_comparisons)
 }
 
 med_age <- median(CompleteData$age)
-#Make results table for primary and sub analyses
+#Make results table for primary and startified analyses
 my_comparisons <- CompleteData %>% ResMaker()
 my_old_comparisons <- CompleteData %>% filter(age > med_age) %>% ResMaker()
 my_young_comparisons <- CompleteData %>% filter(age <= med_age) %>% ResMaker()
@@ -141,7 +155,7 @@ knitr::kable(my_comparisons, "latex")
 knitr::kable(cbind(my_young_comparisons, my_old_comparisons %>% select(-contrast)), "latex")
 knitr::kable(cbind(my_seronegative_comparisons, my_seropositive_comparisons %>% select(-contrast)), "latex")
 
-
+#Make tables for secondary and sensitivity analysis for different Pis
 foundR <- MakeR(foundA, Z, T_decider)
 foundKB <- MakeKB(foundR, TLevels, 4)
 foundb <- KbSolver(foundKB, 3)
@@ -150,38 +164,31 @@ foundP_Sigma <- P_SigmaIdentifier(P_Z, foundKB, foundb)
 foundReliableLatesList <- foundP_Sigma$WA %>% 
   lapply(function(x) max(x) > 0.1) %>% 
   unlist() %>% which() %>% names()
+my_found_comparisons <- CompleteData %>% ResMaker(foundKB, foundb, foundReliableLatesList, onlyIV = TRUE, ContrastVec = my_comparisons$contrast)
+knitr::kable(my_found_comparisons, "latex")
 
-LATEs <- LATEIdentifier(Q_Z, foundKB, foundb, foundP_Sigma)
-
-BSCIs <- BSCICalculator(10000, CompleteData, "Z_value", "trtgrp", "Rem", 
-                        foundKB, foundb, Cap = TRUE)
-
-
-my_found_comparisons <- CompleteData %>% ResMaker(foundKB, foundb)
+fullA <- GenerateA(TLevels)
+fullR <- MakeR(fullA, Z, T_decider)
+fullKB <- MakeKB(fullR, TLevels, 4)
+fullb <- KbSolver(fullKB, 3)
+fullPis <- PiIdentifier(fullb)
+fullP_Sigma <- P_SigmaIdentifier(P_Z, fullKB, fullb)
+fullReliableLatesList <- fullP_Sigma$WA %>% 
+  lapply(function(x) max(x) > 0.1) %>% 
+  unlist() %>% which() %>% names()
+my_full_comparisons <- CompleteData %>% ResMaker(fullKB, fullb, fullReliableLatesList, onlyIV = TRUE, ContrastVec = my_comparisons$contrast)
+knitr::kable(my_full_comparisons, "latex")
 
 Pz <- (summary(as.factor(CompleteData$Z_value))/nrow(CompleteData))
 
 #Make table 1 for target trials
-myCluster <- makeCluster(length(ReliableLatesList))
-registerDoParallel(myCluster)
-registerDoRNG(1234)
-my_sum <- foreach(tt=ReliableLatesList, .combine = "rbind",
-                  .packages = c("dplyr", "stringr")) %dopar% {
+
+SumTbMaker <- function(tt, SumData = CompleteData){
   my_index <- ifelse(tt == "Cer_Gol", 3, 1)
-  pseudo_data <- PseudoPopulator(tt, CompleteData, KB, b, P_Sigma, 
+  P_Z2 <- MakeP_Z(SumData, "Z_value", "trtgrp")
+  P_Sigma2 <- P_SigmaIdentifier(P_Z2, KB, b)
+  pseudo_data <- PseudoPopulator(tt, SumData, KB, b, P_Sigma2, 
                                  "Z_value", "trtgrp", "Rem", my_index)
-  #t1 <- substr(tt, 1,3)
-  #t2 <- substr(tt, 5,7)
-  #if(tt == "Cer_Gol"){
-  #  headcount1 <- round(P_Sigma$E1[[tt]][3] * min(1, Pz %*% KB[[t1]]$B_t %*% b[[tt]][3,]) * nrow(CompleteData))[1]
-  #  headcount2 <- round(P_Sigma$E2[[tt]][3] * min(1, Pz %*% KB[[t2]]$B_t %*% b[[tt]][3,]) * nrow(CompleteData))[1]
-  #}else if(tt %in% c("Cer_Inf", "Eta_Gol")){
-  #  headcount1 <- round(P_Sigma$E1[[tt]] * min(1, Pz %*% KB[[t1]]$B_t %*% t(b[[tt]])) * nrow(CompleteData))[1]
-  #  headcount2 <- round(P_Sigma$E2[[tt]] * min(1, Pz %*% KB[[t2]]$B_t %*% t(b[[tt]])) * nrow(CompleteData))[1]
-  #}else{
-  #  headcount1 <- round(P_Sigma$E1[[tt]] * min(1, Pz %*% KB[[t1]]$B_t %*% b[[tt]]) * nrow(CompleteData))[1]
-  #  headcount2 <- round(P_Sigma$E2[[tt]] * min(1, Pz %*% KB[[t2]]$B_t %*% b[[tt]]) * nrow(CompleteData))[1]
-  #}
   my_weights <- pseudo_data$w
   pseudo_data <- pseudo_data %>% 
     mutate(BL_DAS28 = (0.56*sqrt(BL_tjc28)) + 
@@ -211,16 +218,11 @@ my_sum <- foreach(tt=ReliableLatesList, .combine = "rbind",
                       c("trtgrp", "age", "BL_diagdur", "BL_DAS28"))] <- 
     Summary_table[, !(colnames(Summary_table) %in% 
                         c("trtgrp", "age", "BL_diagdur", "BL_DAS28"))] %>% 
-    mutate_all(function(x) ifelse(x > 100, 100, ifelse(x < 0, 0, x)))
+    mutate_all(function(x) ifelse(x > 100, NA, ifelse(x < 0, NA, x)))
   
   Summary_table <- Summary_table[, c(1,3,11:14,4:7,9:10,8)]
   
   Summary_table$trtgrp <- as.character(Summary_table$trtgrp)
-  
-  #Summary_table$trtgrp[Summary_table$trtgrp == t1] <- 
-  #  paste0(Summary_table$trtgrp[Summary_table$trtgrp == t1], " (", headcount1, ")")
-  #Summary_table$trtgrp[Summary_table$trtgrp == t2] <- 
-  #  paste0(Summary_table$trtgrp[Summary_table$trtgrp == t2], " (", headcount2, ")")
   
   colnames(Summary_table) <- c("Treatment", 
                                "Age (years)", "Male (%)", "Smoker current (%)", 
@@ -229,21 +231,80 @@ my_sum <- foreach(tt=ReliableLatesList, .combine = "rbind",
                                "Previous MTX user (%)",  "Methotrexate at BL (%)", 
                                "Other DMARDs  at BL (%)", "DAS28 CRP", 
                                "Diagnosis duration (years)")
-  Summary_table
-                  }
-stopCluster(myCluster)
-Summary_table <- t(my_sum)
-knitr::kable(Summary_table, "latex")
+  return(Summary_table)
+}
 
-CompleteData2 <- CompleteData
-colnames(CompleteData2)[33:53] <- paste0("comorb", 1:21)
-adj_cols <- colnames(CompleteData2)[4:ncol(CompleteData2)]
-P_Z_adj <- MakeP_Z(CompleteData2, "Z_value", "trtgrp", adj_cols,T)
-Q_Z_adj <- MakeQ_Z(CompleteData2, "Z_value", "trtgrp", "Rem", adj_cols, T, "binomial", P_Z_adj)
+
+
+myCluster <- makeCluster(14)
+clusterExport(myCluster, c("SumTbMaker", "ReliableLatesList", "CompleteData",
+                           "PseudoPopulator", "MakeP_Z", "P_SigmaIdentifier",
+                           "KB", "b"))
+registerDoParallel(myCluster)
+registerDoRNG(1234)
+my_sum_list <- foreach(bb=idiv(10000, chunks=getDoParWorkers()),
+                  .packages = c("dplyr", "stringr")) %dopar% {
+                    l_e <- list()
+                    for (counter in 1:bb) {
+                      my_sum2 <- lapply(ReliableLatesList, SumTbMaker,
+                                        CompleteData[sample(nrow(CompleteData), 
+                                                            nrow(CompleteData), 
+                                                            replace=T),])
+                      names(my_sum2) <- ReliableLatesList
+                      l_e[[counter]] <- my_sum2
+                    }
+                    l_e
+                    }
+stopCluster(myCluster)
+
+my_sum_biglist <- do.call(c, my_sum_list)
+my_sum_list <- list()
+my_low_list <- list()
+my_high_list <- list()
+for(tt in ReliableLatesList){
+  my_sum_smallList <- lapply(my_sum_biglist, function(x) x[[tt]])
+  my_sum_df <- do.call(rbind,my_sum_smallList)
+  my_sum_list[[tt]] <- my_sum_df %>% group_by(Treatment) %>% summarise_all(median, na.rm = TRUE)
+  my_low_list[[tt]] <- my_sum_df %>% group_by(Treatment) %>% summarise_all(quantile, na.rm = TRUE, probs = 0.025)
+  my_high_list[[tt]] <- my_sum_df %>% group_by(Treatment) %>% summarise_all(quantile, na.rm = TRUE, probs = 0.975)
+}
+my_sum <- do.call(rbind,my_sum_list)
+my_low <- do.call(rbind,my_low_list)
+my_high <- do.call(rbind,my_high_list)
+
+Summary_table <- my_sum
+for (counter in 2:ncol(my_sum)) {
+  Summary_table[[counter]] <- paste0(round(my_sum[[counter]]), " (", round(my_low[[counter]]), ", ", round(my_high[[counter]]), ")")
+}
+Summary_table <- t(Summary_table)
+knitr::kable(Summary_table[,7:10], "latex")
+
+remove(my_sum, my_sum_biglist, my_sum_list, my_sum_smallList, l_e)
+
+#
+treeData <- CompleteData %>% select(-Z_value, -Rem)
+colnames(treeData)[31:51] <- paste0("comorb", 1:21)
+set.seed(2)
+myTree <- party::ctree((trtgrp=="Gol") ~ ., data = treeData %>%
+                         select(-center, -all_of(paste0("comorb", 1:21))),
+             control = party::ctree_control(mincriterion=0.95, 
+                                            minsplit=20, 
+                                            minbucket=10))
+plot(myTree)
+
+
+
+
+adj_cols <- c("center", "sex", "age", "smoker", "rhmfact", "prevmtx",
+              "BL_Methotrexate", "BL_tjc28", "BL_sjc28", "BL_pga", "BL_crp", "BL_esr",
+              "BL_diagdur", "BL_sympdur")
+P_Z_adj <- MakeP_Z(CompleteData, "Z_value", "trtgrp", adj_cols,T)
+Q_Z_adj <- MakeQ_Z(CompleteData, "Z_value", "trtgrp", "Rem", adj_cols, T, "binomial", P_Z_adj)
 LATEs_adj <- LATEIdentifier(Q_Z_adj, KB, b, P_SigmaIdentifier(P_Z_adj, KB, b))
-BSCIs_adj <- BSCICalculator(10000, CompleteData2, "Z_value", "trtgrp", "Rem", 
+BSCIs_adj <- BSCICalculator(1000, CompleteData, "Z_value", "trtgrp", "Rem", 
                         KB, b, Cap = TRUE, C_columns = adj_cols, parametric = T,
                         family = "binomial")
+save(BSCIs_adj, file = "BSCIs_adj.Rdata")
 
 
 

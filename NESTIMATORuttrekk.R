@@ -332,8 +332,8 @@ data$leftover[data$Z_value > 1] <-
             sapply(Z[data$Z_value[data$Z_value > 1]-1], function(x) x[1])) & 
            (data$trtgrp[data$Z_value > 1] != 
               sapply(Z[data$Z_value[data$Z_value > 1]], function(x) x[1])))
-hist((data %>% filter(leftover & (Z_value %in% c(3,5))))$PeriodDay, xlab = "Days since NDPC change",
-     main = "Probability of picking previous winner", breaks = (0:40)*10, probability = T)
+hist((data %>% filter(leftover))$PeriodDay, xlab = "Days since LIS change",
+     main = "Probability of picking previous winner", breaks = (0:20)*20, probability = T)
 
 data <- data %>% select(-leftover, -PeriodDay)
 #backup_data <- data

@@ -3,6 +3,7 @@ load("C:/Users/kazem/Documents/Data/tdToTSD/td/CompleteData.Rdata")
 load("C:/Users/kazem/Documents/Data/tdToTSD/td/data.Rdata")
 setwd("C:/Users/kazem/Dropbox/NESTIMATOR PhD/R Scripts/nestimator2/Nestimator2")
 source("Functions.R")
+library(ggplot2)
 
 TLevels <- levels(data$trtgrp)
 
@@ -85,24 +86,71 @@ Summary_table_com$trtgrp <-
 
 Summary_table_com <- t(Summary_table_com)
 knitr::kable(Summary_table_com, "latex")
-
+Z <- list(
+  "2010" = c("INX", "GOM", "CZP", "ETN", "ADM"),
+  "2011" = c("ETN", "INX", "CZP", "GOM", "ADM"),
+  "2012" = c("INX", "ETN", "CZP", "GOM", "ADM"),
+  "2013" = c("CZP", "INX", "GOM", "ETN", "ADM"),
+  "2014" = c("INX", "CZP", "GOM", "ADM", "ETN"),
+  "2015" = c("INX", "CZP", "GOM", "ETN", "ADM"),
+  "2016" = c("INX", "CZP", "ETN", "GOM", "ADM"),
+  "2017" = c("INX", "ETN", "GOM", "CZP", "ADM"),
+  "2018" = c("INX", "ETN", "CZP", "ADM", "GOM"),
+  "2019" = c("ADM", "INX", "ETN", "CZP", "GOM"),
+  "2020" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
+  "2021" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
+  "2022" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
+  "2023" = c("ADM", "INX", "ETN", "CZP", "GOM")
+)
 Z_summary <- c("Year", paste0(1:5, ". place"), "N") %>%
   cbind(10:23 %>% rbind(data.frame(
-          "2010" = c("Inf", "Gol", "Cer", "Eta", "Ada"),
-          "2011" = c("Eta", "Inf", "Cer", "Gol", "Ada"),
-          "2012" = c("Inf", "Eta", "Cer", "Gol", "Ada"),
-          "2013" = c("Cer", "Inf", "Gol", "Eta", "Ada"),
-          "2014" = c("Inf", "Cer", "Gol", "Ada", "Eta"),
-          "2015" = c("Inf", "Cer", "Gol", "Eta", "Ada"),
-          "2016" = c("Inf", "Cer", "Eta", "Gol", "Ada"),
-          "2017" = c("Inf", "Eta", "Gol", "Cer", "Ada"),
-          "2018" = c("Inf", "Eta", "Cer", "Ada", "Gol"),
-          "2019" = c("Ada", "Inf", "Eta", "Cer", "Gol"),
-          "2020" = c("Ada", "Inf", "Eta", "Cer", "Gol") ,
-          "2021" = c("Ada", "Inf", "Eta", "Cer", "Gol") ,
-          "2022" = c("Ada", "Inf", "Eta", "Cer", "Gol") ,
-          "2023" = c("Ada", "Inf", "Eta", "Cer", "Gol")
+          "2010" = c("INX", "GOM", "CZP", "ETN", "ADM"),
+          "2011" = c("ETN", "INX", "CZP", "GOM", "ADM"),
+          "2012" = c("INX", "ETN", "CZP", "GOM", "ADM"),
+          "2013" = c("CZP", "INX", "GOM", "ETN", "ADM"),
+          "2014" = c("INX", "CZP", "GOM", "ADM", "ETN"),
+          "2015" = c("INX", "CZP", "GOM", "ETN", "ADM"),
+          "2016" = c("INX", "CZP", "ETN", "GOM", "ADM"),
+          "2017" = c("INX", "ETN", "GOM", "CZP", "ADM"),
+          "2018" = c("INX", "ETN", "CZP", "ADM", "GOM"),
+          "2019" = c("ADM", "INX", "ETN", "CZP", "GOM"),
+          "2020" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
+          "2021" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
+          "2022" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
+          "2023" = c("ADM", "INX", "ETN", "CZP", "GOM")
 ), summary(data$Z_value)))
+
+P_Z <- MakeP_Z(CompleteData, "Z_value", "trtgrp") %>% select(-Z_value) %>% t()
+rownames(P_Z) <- c("ADM", "CZP", "ETN", "GOM", "INX")
+counter <- 1
+MyHeatMap <- data.frame("2010" = unname(P_Z[Z[[counter]],counter]))
+for (counter in 2:14) {
+  MyHeatMap <- MyHeatMap %>% cbind(unname(P_Z[Z[[counter]],counter]))
+}
+colnames(MyHeatMap) <- 2010:2023
+dt2 <- MyHeatMap %>%
+  rownames_to_column() %>%
+  gather(colname, value, -rowname)
+dt3 <- Z_summary[2:7, 2:15] %>%
+  rownames_to_column() %>%
+  gather(colname, value, -rowname)
+dt3$rowname <- as.character(as.numeric(dt3$rowname) - 1)
+dt3$colname <- substring(dt3$colname, 2)
+dt3$rowname[dt3$rowname == "6"] <- "N"
+ggplot(dt2) +
+  geom_tile(aes(x = colname, y = rowname, fill = value)) + 
+  scale_fill_gradient(low = "white", high = "red") +
+  geom_text(data = dt3, aes(x = colname, y = rowname, label = value)) + 
+  ylab("Position in LIS") + xlab("Year") + labs(fill = "Probability") + 
+  geom_hline(yintercept = 1.5)+
+  theme(panel.background = element_blank()) + 
+  scale_y_discrete(limits = c("N", as.character(5:1)))
 
 knitr::kable(Z_summary, "latex")
 
+data <- data %>% 
+  mutate(BL_DAS28 = (0.56*sqrt(BL_tjc28)) + 
+           (0.28*sqrt(BL_sjc28)) + 
+           (0.014*BL_pga) + 
+           (0.36*log(BL_crp+1)) + 0.96)
+data %>% select(trtgrp, BL_DAS28) %>%group_by(trtgrp) %>% summarise_all(mean, na.rm = TRUE)
