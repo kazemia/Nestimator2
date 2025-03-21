@@ -102,23 +102,32 @@ Z <- list(
   "2022" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
   "2023" = c("ADM", "INX", "ETN", "CZP", "GOM")
 )
-Z_summary <- c("Year", paste0(1:5, ". place"), "N") %>%
-  cbind(10:23 %>% rbind(data.frame(
-          "2010" = c("INX", "GOM", "CZP", "ETN", "ADM"),
-          "2011" = c("ETN", "INX", "CZP", "GOM", "ADM"),
-          "2012" = c("INX", "ETN", "CZP", "GOM", "ADM"),
-          "2013" = c("CZP", "INX", "GOM", "ETN", "ADM"),
-          "2014" = c("INX", "CZP", "GOM", "ADM", "ETN"),
-          "2015" = c("INX", "CZP", "GOM", "ETN", "ADM"),
-          "2016" = c("INX", "CZP", "ETN", "GOM", "ADM"),
-          "2017" = c("INX", "ETN", "GOM", "CZP", "ADM"),
-          "2018" = c("INX", "ETN", "CZP", "ADM", "GOM"),
-          "2019" = c("ADM", "INX", "ETN", "CZP", "GOM"),
-          "2020" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
-          "2021" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
-          "2022" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
-          "2023" = c("ADM", "INX", "ETN", "CZP", "GOM")
-), summary(data$Z_value)))
+
+Z_summary <- data.frame(
+  "2010" = c("INX", "GOM", "CZP", "ETN", "ADM"),
+  "2011" = c("ETN", "INX", "CZP", "GOM", "ADM"),
+  "2012" = c("INX", "ETN", "CZP", "GOM", "ADM"),
+  "2013" = c("CZP", "INX", "GOM", "ETN", "ADM"),
+  "2014" = c("INX", "CZP", "GOM", "ADM", "ETN"),
+  "2015" = c("INX", "CZP", "GOM", "ETN", "ADM"),
+  "2016" = c("INX", "CZP", "ETN", "GOM", "ADM"),
+  "2017" = c("INX", "ETN", "GOM", "CZP", "ADM"),
+  "2018" = c("INX", "ETN", "CZP", "ADM", "GOM"),
+  "2019" = c("ADM", "INX", "ETN", "CZP", "GOM"),
+  "2020" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
+  "2021" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
+  "2022" = c("ADM", "INX", "ETN", "CZP", "GOM") ,
+  "2023" = c("ADM", "INX", "ETN", "CZP", "GOM")
+)
+
+Z_summary <- Z_summary %>% rbind(summary(CompleteData$Z_value))
+
+Z_summary <- Z_summary %>% rbind(round((CompleteData %>% group_by(Z_value) %>% summarise(RR = mean(Rem)))$RR*100)/100)
+
+Z_summary <- 10:23 %>% rbind(Z_summary)
+
+Z_summary <- c("Year", paste0(1:5, ". place"), "N", "P(Y)") %>%
+  cbind(Z_summary)
 
 P_Z <- MakeP_Z(CompleteData, "Z_value", "trtgrp") %>% select(-Z_value) %>% t()
 rownames(P_Z) <- c("ADM", "CZP", "ETN", "GOM", "INX")
@@ -131,20 +140,21 @@ colnames(MyHeatMap) <- 2010:2023
 dt2 <- MyHeatMap %>%
   rownames_to_column() %>%
   gather(colname, value, -rowname)
-dt3 <- Z_summary[2:7, 2:15] %>%
+dt3 <- Z_summary[2:8, 2:15] %>%
   rownames_to_column() %>%
   gather(colname, value, -rowname)
 dt3$rowname <- as.character(as.numeric(dt3$rowname) - 1)
 dt3$colname <- substring(dt3$colname, 2)
 dt3$rowname[dt3$rowname == "6"] <- "N"
+dt3$rowname[dt3$rowname == "7"] <- "P(Y)"
 ggplot(dt2) +
   geom_tile(aes(x = colname, y = rowname, fill = value)) + 
   scale_fill_gradient(low = "white", high = "red") +
   geom_text(data = dt3, aes(x = colname, y = rowname, label = value)) + 
   ylab("Position in LIS") + xlab("Year") + labs(fill = "Probability") + 
-  geom_hline(yintercept = 1.5)+
+  geom_hline(yintercept = 2.5)+
   theme(panel.background = element_blank()) + 
-  scale_y_discrete(limits = c("N", as.character(5:1)))
+  scale_y_discrete(limits = c("P(Y)", "N", as.character(5:1)))
 
 knitr::kable(Z_summary, "latex")
 
